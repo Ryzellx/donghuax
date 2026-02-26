@@ -28,6 +28,7 @@ export default function AnimeCard({ anime }) {
     toSafeText(anime?.episodesText) ||
     toSafeText(anime?.status) ||
     (typeof anime?.score === "number" ? `Score ${anime.score}` : "No score yet");
+  const schedule = toSafeText(anime?.scheduleText, "Tayang: belum diumumkan");
 
   const detailPath = toAnimePath(anime);
 
@@ -48,6 +49,7 @@ export default function AnimeCard({ anime }) {
       <div className="p-2.5 sm:p-3">
         <p className="line-clamp-2 text-sm font-semibold text-slate-100">{title}</p>
         <p className="mt-1 text-xs text-cyan-200/85">{subtitle}</p>
+        <p className="mt-1 line-clamp-2 text-[11px] text-amber-200/90">{schedule}</p>
       </div>
     </Link>
   );

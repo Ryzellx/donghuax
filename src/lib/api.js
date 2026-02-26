@@ -78,6 +78,62 @@ function cleanSourceName(value, fallback = "Source") {
   return text || fallback;
 }
 
+function extractScheduleDay(text) {
+  const raw = toSafeText(text).toLowerCase();
+  if (!raw) return "";
+  const dayMap = [
+    { key: "senin", label: "Senin" },
+    { key: "selasa", label: "Selasa" },
+    { key: "rabu", label: "Rabu" },
+    { key: "kamis", label: "Kamis" },
+    { key: "jumat", label: "Jumat" },
+    { key: "sabtu", label: "Sabtu" },
+    { key: "minggu", label: "Minggu" },
+    { key: "monday", label: "Monday" },
+    { key: "tuesday", label: "Tuesday" },
+    { key: "wednesday", label: "Wednesday" },
+    { key: "thursday", label: "Thursday" },
+    { key: "friday", label: "Friday" },
+    { key: "saturday", label: "Saturday" },
+    { key: "sunday", label: "Sunday" },
+  ];
+
+  const hit = dayMap.find((item) => raw.includes(item.key));
+  return hit?.label || "";
+}
+
+function extractWeeklyFrequency(text) {
+  const raw = toSafeText(text).toLowerCase();
+  if (!raw) return "";
+
+  const timesMatch = raw.match(/(\d+)\s*x\s*(seminggu|minggu|week)/i);
+  if (timesMatch) return `${timesMatch[1]}x/minggu`;
+
+  const perWeekMatch = raw.match(/(\d+)\s*(kali|times?)\s*(per|\/)?\s*(minggu|week)/i);
+  if (perWeekMatch) return `${perWeekMatch[1]}x/minggu`;
+
+  if (/\bdaily\b|setiap hari|harian/i.test(raw)) return "7x/minggu";
+  if (/weekdays|senin\s*-\s*jumat/i.test(raw)) return "5x/minggu";
+  if (/weekends|sabtu\s*-\s*minggu/i.test(raw)) return "2x/minggu";
+  if (/weekly|mingguan|setiap minggu/i.test(raw)) return "1x/minggu";
+
+  return "";
+}
+
+function deriveScheduleInfo(item) {
+  const statusText = toSafeText(item?.status);
+  const headlineText = toSafeText(item?.headline);
+  const titleText = toSafeText(item?.title);
+  const sourceText = [statusText, headlineText, titleText].filter(Boolean).join(" | ");
+
+  const day = extractScheduleDay(sourceText);
+  const perWeek = extractWeeklyFrequency(sourceText);
+  const scheduleText =
+    day || perWeek ? `Tayang ${day || "jadwal belum pasti"}${perWeek ? ` - ${perWeek}` : ""}` : "Tayang: belum diumumkan";
+
+  return { day, perWeek, scheduleText };
+}
+
 function buildCacheKey(url) {
   return `${FRONTEND_CACHE_PREFIX}:${url}`;
 }
@@ -193,6 +249,7 @@ function normalizeAnimeItem(item) {
       : Array.isArray(synopsisValue?.paragraphs)
       ? synopsisValue.paragraphs.join(" ")
       : toSafeText(item.synopsis || item.description || "");
+  const schedule = deriveScheduleInfo(item);
 
   return {
     ...item,
@@ -208,6 +265,9 @@ function normalizeAnimeItem(item) {
     score: parseNumberish(item.rating || item.score),
     rank: null,
     status,
+    scheduleDay: schedule.day,
+    schedulePerWeek: schedule.perWeek,
+    scheduleText: schedule.scheduleText,
     episodes,
     episodesText: episodes ? `${episodes} eps` : status || "Episode tersedia",
   };

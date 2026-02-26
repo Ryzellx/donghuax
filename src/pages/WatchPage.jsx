@@ -227,6 +227,20 @@ function formatEpisodeLabel(episode, index = 0) {
   return `Episode ${episodeNo} - ${rawTitle}`;
 }
 
+function sortEpisodesAscending(list = []) {
+  return [...list].sort((a, b) => {
+    const aNum = Number(a?.number);
+    const bNum = Number(b?.number);
+    const aHasNum = Number.isFinite(aNum) && aNum > 0;
+    const bHasNum = Number.isFinite(bNum) && bNum > 0;
+
+    if (aHasNum && bHasNum) return aNum - bNum;
+    if (aHasNum) return -1;
+    if (bHasNum) return 1;
+    return formatEpisodeLabel(a).localeCompare(formatEpisodeLabel(b), "id", { sensitivity: "base" });
+  });
+}
+
 function getYouTubeEmbed(detail, videos) {
   const candidates = [
     detail?.trailer?.embed_url,
@@ -335,7 +349,8 @@ export default function WatchPage() {
         if (!active) return;
 
         const normalizedDetail = detailRes.status === "fulfilled" ? extractObject(detailRes.value, "anime") : {};
-        const parsedEpisodes = episodesRes.status === "fulfilled" ? extractEpisodeList(episodesRes.value) : [];
+        const parsedEpisodesUnsorted = episodesRes.status === "fulfilled" ? extractEpisodeList(episodesRes.value) : [];
+        const parsedEpisodes = sortEpisodesAscending(parsedEpisodesUnsorted);
         const parsedVideos = videosRes.status === "fulfilled" ? extractVideoList(videosRes.value) : [];
 
         setDetail(normalizedDetail);
@@ -694,6 +709,9 @@ export default function WatchPage() {
         <h1 className="font-heading text-2xl font-bold text-white sm:text-3xl">{detail.title || `Donghua ${animeId}`}</h1>
         {selectedEpisodeNumber ? <p className="mt-1 text-sm text-cyan-200">Episode #{selectedEpisodeNumber}</p> : null}
         <p className="mt-2 text-sm text-slate-300">Pilih episode, category, dan server, lalu mulai menonton.</p>
+        <p className="mt-2 rounded-lg border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-200">
+          Note: jangan di pencet berkali kali, stream otomatis play.
+        </p>
       </div>
 
       {error ? <p className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">{error}</p> : null}
