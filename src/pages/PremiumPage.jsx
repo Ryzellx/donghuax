@@ -16,7 +16,7 @@ export default function PremiumPage() {
       <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 sm:p-6">
         <h1 className="font-heading text-2xl font-bold text-white sm:text-3xl">Premium</h1>
         <p className="mt-2 text-sm text-slate-300">
-          Aktivasi via admin. Admin bisa atur plan + durasi hari langsung dari Admin Panel.
+          Aktivasi via admin. Admin bisa atur plan + durasi hari langsung dari Admin Panel. Mulai dari 10rb aja!
         </p>
         <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
           <p className="text-sm text-slate-300">Status saat ini</p>
@@ -42,4 +42,5 @@ export default function PremiumPage() {
     </section>
   );
 }
+
 
