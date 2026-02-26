@@ -31,7 +31,7 @@ export default function PremiumPage() {
           <li>Prioritas support dari admin.</li>
         </ul>
         <a
-          href="https://wa.me/6280000000000"
+          href="https://wa.me/628990870271"
           target="_blank"
           rel="noreferrer"
           className="mt-4 inline-flex rounded-xl bg-gradient-to-r from-fuchsia-500 to-cyan-400 px-4 py-2.5 text-sm font-semibold text-white"
@@ -42,3 +42,4 @@ export default function PremiumPage() {
     </section>
   );
 }
+
