@@ -142,8 +142,10 @@ export function AuthProvider({ children }) {
         if (idx >= 0) {
           const existingPhoto = String(nextUsers[idx]?.photoUrl || "").trim();
           nextUsers[idx] = sanitizeUser({
-            ...nextUsers[idx],
             ...base,
+            ...nextUsers[idx],
+            email,
+            username: fbUser.displayName || nextUsers[idx].username || base.username,
             photoUrl: existingPhoto || base.photoUrl,
             role: nextUsers[idx].role || role,
           });
