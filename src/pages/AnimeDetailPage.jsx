@@ -10,6 +10,8 @@ import {
 } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 
+const ANDROID_NOTIFY_SUBS_KEY = "donghuax_android_notify_v1";
+
 function parseNumberish(value) {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   const text = String(value ?? "").replace(",", ".");
@@ -17,6 +19,27 @@ function parseNumberish(value) {
   if (!match) return null;
   const num = Number.parseFloat(match[1]);
   return Number.isFinite(num) ? num : null;
+}
+
+function getEpisodeNumber(episode) {
+  const num = Number(episode?.number);
+  return Number.isFinite(num) && num > 0 ? num : 0;
+}
+
+function sortEpisodesAscending(list = []) {
+  return [...list].sort((a, b) => {
+    const aNum = getEpisodeNumber(a);
+    const bNum = getEpisodeNumber(b);
+    if (aNum && bNum) return aNum - bNum;
+    if (aNum) return -1;
+    if (bNum) return 1;
+    return String(a?.title || "").localeCompare(String(b?.title || ""), "id", { sensitivity: "base" });
+  });
+}
+
+function isAndroidDevice() {
+  if (typeof navigator === "undefined") return false;
+  return /Android/i.test(navigator.userAgent || "");
 }
 
 export default function AnimeDetailPage() {
@@ -34,6 +57,8 @@ export default function AnimeDetailPage() {
   const [characters, setCharacters] = useState([]);
   const [recommendations, setRecommendations] = useState([]);
   const [error, setError] = useState("");
+  const [notifMessage, setNotifMessage] = useState("");
+  const [notifEnabled, setNotifEnabled] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -61,7 +86,8 @@ export default function AnimeDetailPage() {
                 synopsis: "",
               };
         setDetail(normalizedDetail);
-        setEpisodes(episodesRes.status === "fulfilled" ? extractEpisodeList(episodesRes.value) : []);
+        const parsedEpisodes = episodesRes.status === "fulfilled" ? extractEpisodeList(episodesRes.value) : [];
+        setEpisodes(sortEpisodesAscending(parsedEpisodes));
         setCharacters(charsRes.status === "fulfilled" ? extractCharacterList(charsRes.value) : []);
         setRecommendations(recRes.status === "fulfilled" ? extractRecommendationList(recRes.value, "anime") : []);
 
@@ -80,6 +106,21 @@ export default function AnimeDetailPage() {
     };
   }, [animeId, animeSource, slug]);
 
+  useEffect(() => {
+    const targetAnimeId = String(detail.animeId || animeId || "");
+    if (!targetAnimeId) {
+      setNotifEnabled(false);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(ANDROID_NOTIFY_SUBS_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      setNotifEnabled(Boolean(parsed?.[targetAnimeId]));
+    } catch {
+      setNotifEnabled(false);
+    }
+  }, [detail.animeId, animeId]);
+
   const synopsisText = useMemo(() => detail.synopsis || "No synopsis available.", [detail]);
   const animeSlug = detail.animeSlug || slug;
   const inWatchlist = useMemo(
@@ -95,6 +136,60 @@ export default function AnimeDetailPage() {
     const score = parseNumberish(detail?.score ?? detail?.moreInfo?.malscore ?? detail?.jikan?.score);
     return score == null ? "N/A" : score.toFixed(2);
   }, [detail]);
+  const androidOnly = useMemo(() => isAndroidDevice(), []);
+  const latestEpisode = useMemo(() => episodes.reduce((max, item) => Math.max(max, getEpisodeNumber(item)), 0), [episodes]);
+
+  const toggleAndroidNotification = async () => {
+    setNotifMessage("");
+
+    if (!androidOnly) {
+      setNotifMessage("Notifikasi otomatis hanya tersedia di Android.");
+      return;
+    }
+    if (typeof Notification === "undefined") {
+      setNotifMessage("Browser ini tidak mendukung notifikasi.");
+      return;
+    }
+
+    const targetAnimeId = String(detail.animeId || animeId || "");
+    if (!targetAnimeId) return;
+
+    let permission = Notification.permission;
+    if (permission === "default") {
+      permission = await Notification.requestPermission();
+    }
+    if (permission !== "granted") {
+      setNotifMessage("Izin notifikasi ditolak.");
+      return;
+    }
+
+    try {
+      const raw = localStorage.getItem(ANDROID_NOTIFY_SUBS_KEY);
+      const subs = raw ? JSON.parse(raw) : {};
+
+      if (subs[targetAnimeId]) {
+        delete subs[targetAnimeId];
+        localStorage.setItem(ANDROID_NOTIFY_SUBS_KEY, JSON.stringify(subs));
+        setNotifEnabled(false);
+        setNotifMessage("Notifikasi dimatikan.");
+        return;
+      }
+
+      subs[targetAnimeId] = {
+        animeId: targetAnimeId,
+        title: detail.title || animeId,
+        poster: detail.poster || "",
+        source: animeSource,
+        slug: animeSlug,
+        lastNotifiedEpisode: latestEpisode,
+      };
+      localStorage.setItem(ANDROID_NOTIFY_SUBS_KEY, JSON.stringify(subs));
+      setNotifEnabled(true);
+      setNotifMessage("Notifikasi Android aktif.");
+    } catch {
+      setNotifMessage("Gagal menyimpan preferensi notifikasi.");
+    }
+  };
 
   if (loading) {
     return (
@@ -156,6 +251,18 @@ export default function AnimeDetailPage() {
           >
             {inWatchlist ? "Remove Watchlist" : "Add Watchlist"}
           </button>
+          <button
+            type="button"
+            onClick={toggleAndroidNotification}
+            className={`ml-2 mt-4 inline-flex rounded-full border px-4 py-2 text-sm font-semibold transition ${
+              notifEnabled
+                ? "border-emerald-300/50 bg-emerald-400/15 text-emerald-200 hover:bg-emerald-400/20"
+                : "border-white/20 bg-white/5 text-white hover:bg-white/10"
+            }`}
+          >
+            {notifEnabled ? "Notif Android: ON" : "Aktifkan Notif Android"}
+          </button>
+          {notifMessage ? <p className="mt-2 text-xs text-amber-200">{notifMessage}</p> : null}
         </div>
       </div>
 

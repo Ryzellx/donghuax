@@ -6,6 +6,23 @@ import { useAuth } from "../context/AuthContext";
 
 const SEARCH_HISTORY_KEY = "donghuax_search_history_v1";
 const SEARCH_HISTORY_LIMIT = 12;
+const ANDROID_NOTIFY_SUBS_KEY = "donghuax_android_notify_v1";
+
+function isAndroidDevice() {
+  if (typeof navigator === "undefined") return false;
+  return /Android/i.test(navigator.userAgent || "");
+}
+
+function parseEpisodeCounter(item) {
+  const direct = Number(item?.episodes);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+
+  const text = String(item?.episodesText || item?.status || item?.headline || "");
+  const match = text.match(/(\d+)/);
+  if (!match) return 0;
+  const num = Number.parseInt(match[1], 10);
+  return Number.isFinite(num) && num > 0 ? num : 0;
+}
 
 function normalizeSearchText(value) {
   return String(value || "")
@@ -169,6 +186,46 @@ export default function HomePage() {
     }, 5000);
     return () => clearInterval(timer);
   }, [featuredPool.length]);
+
+  useEffect(() => {
+    if (!isAndroidDevice()) return;
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission !== "granted") return;
+
+    try {
+      const raw = localStorage.getItem(ANDROID_NOTIFY_SUBS_KEY);
+      const subs = raw ? JSON.parse(raw) : {};
+      if (!subs || typeof subs !== "object") return;
+
+      let hasUpdate = false;
+      home.latestEpisodes.forEach((item) => {
+        const animeId = String(item?.animeId || item?.id || "");
+        if (!animeId || !subs[animeId]) return;
+
+        const latest = parseEpisodeCounter(item);
+        const prev = Number(subs[animeId]?.lastNotifiedEpisode || 0);
+        if (!Number.isFinite(latest) || latest <= prev) return;
+
+        new Notification(`Donghua update: ${item?.title || animeId}`, {
+          body: `Episode ${latest} sudah tayang.`,
+          icon: item?.poster || subs[animeId]?.poster || undefined,
+          tag: `donghuax-${animeId}-${latest}`,
+        });
+
+        subs[animeId] = {
+          ...subs[animeId],
+          lastNotifiedEpisode: latest,
+        };
+        hasUpdate = true;
+      });
+
+      if (hasUpdate) {
+        localStorage.setItem(ANDROID_NOTIFY_SUBS_KEY, JSON.stringify(subs));
+      }
+    } catch {
+      // ignore notification/storage failure
+    }
+  }, [home.latestEpisodes]);
 
   const featured = useMemo(
     () =>

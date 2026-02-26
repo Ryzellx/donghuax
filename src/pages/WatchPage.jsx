@@ -207,13 +207,13 @@ function pickEpisodeId(episodes, episodeIdFromQuery, episodeFromQuery) {
 
   if (!Array.isArray(episodes) || episodes.length === 0) return "";
 
-  const byHighestNumber = [...episodes]
+  const byLowestNumber = [...episodes]
     .filter((item) => item?.episodeId)
-    .sort((a, b) => Number(b?.number || 0) - Number(a?.number || 0))[0];
+    .sort((a, b) => Number(a?.number || 0) - Number(b?.number || 0))[0];
 
-  if (byHighestNumber?.episodeId) return toSafeText(byHighestNumber.episodeId);
+  if (byLowestNumber?.episodeId) return toSafeText(byLowestNumber.episodeId);
 
-  return toSafeText(episodes?.[episodes.length - 1]?.episodeId || episodes?.[0]?.episodeId);
+  return toSafeText(episodes?.[0]?.episodeId || episodes?.[episodes.length - 1]?.episodeId);
 }
 
 function formatEpisodeLabel(episode, index = 0) {
