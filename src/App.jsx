@@ -55,7 +55,7 @@ function resolveWhatsAppLink() {
     .replace(/[^\d]/g, "");
   if (numberRaw) return `https://wa.me/${numberRaw}`;
 
-  return "https://wa.me/6280000000000";
+  return "https://wa.me/628990870271";
 }
 
 function GlobalAnnouncement() {
