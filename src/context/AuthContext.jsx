@@ -1,19 +1,21 @@
-/// frontend/src/context/AuthContext.jsx
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   signOut as firebaseSignOut,
   updatePassword,
   updateProfile as updateFirebaseProfile,
 } from "firebase/auth";
-import { auth, googleProvider, hasConfig } from "../lib/firebase";
+import { collection, doc, getDoc, onSnapshot, setDoc } from "firebase/firestore";
+import { auth, db, googleProvider, hasConfig } from "../lib/firebase";
 import { getRandomAnimeAvatar } from "../lib/randomAvatar";
 
 const AuthContext = createContext(null);
-const usersStorageKey = "animex_users";
+const usersCollectionName = "users";
+const legacyUsersStorageKey = "animex_users";
 const adSlotStorageKey = "animex_ad_slot";
 const adLinkStorageKey = "animex_ad_link";
 const allowedAdSlots = new Set(["top-center", "bottom-right", "bottom-left", "middle-right", "middle-left"]);
@@ -60,9 +62,9 @@ function sanitizeUser(user) {
   };
 }
 
-function readUsers() {
+function readLegacyUsers() {
   try {
-    const raw = localStorage.getItem(usersStorageKey);
+    const raw = localStorage.getItem(legacyUsersStorageKey);
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed.map(sanitizeUser) : [];
   } catch {
@@ -70,8 +72,14 @@ function readUsers() {
   }
 }
 
-function saveUsers(users) {
-  localStorage.setItem(usersStorageKey, JSON.stringify(users.map(sanitizeUser)));
+function getLegacyUser(uid, email) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const users = readLegacyUsers();
+  return (
+    users.find((item) => item.id === uid) ||
+    users.find((item) => String(item.email || "").toLowerCase() === normalizedEmail) ||
+    null
+  );
 }
 
 function readAdSlot() {
@@ -97,21 +105,42 @@ function mapAuthErrorMessage(error, fallback) {
   if (code === "auth/invalid-credential") {
     return "Mungkin Email/Password yang kamu masukkan salah";
   }
+  if (code === "auth/operation-not-supported-in-this-environment") {
+    return "Browser tidak mendukung popup login. Coba lagi, nanti otomatis pakai redirect.";
+  }
   return error?.message || fallback;
 }
 
+function detectWebView() {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  const ua = String(navigator.userAgent || "").toLowerCase();
+  const isAndroidWebView = ua.includes("wv") || (ua.includes("android") && ua.includes("version/"));
+  const iOSWebView = /iphone|ipad|ipod/.test(ua) && !ua.includes("safari");
+  const genericWebView = ua.includes("; wv") || ua.includes("webview");
+  return isAndroidWebView || iOSWebView || genericWebView;
+}
+
 export function AuthProvider({ children }) {
-  const [users, setUsers] = useState(() => readUsers());
+  const [users, setUsers] = useState([]);
   const [firebaseUser, setFirebaseUser] = useState(null);
   const [ready, setReady] = useState(false);
   const [adSlot, setAdSlot] = useState(() => readAdSlot());
   const [adLink, setAdLink] = useState(() => readAdLink());
   const adminEmails = useMemo(() => getAdminEmails(), []);
+  const isWebView = useMemo(() => detectWebView(), []);
+  const canUseGoogleAuth = !isWebView;
 
-  const persistUsers = (nextUsers) => {
-    const sanitized = nextUsers.map(sanitizeUser);
-    setUsers(sanitized);
-    saveUsers(sanitized);
+  const setOrReplaceUser = (nextUser) => {
+    setUsers((prev) => {
+      const idx = prev.findIndex((item) => item.id === nextUser.id);
+      if (idx < 0) return [...prev, nextUser];
+      return prev.map((item) => (item.id === nextUser.id ? nextUser : item));
+    });
+  };
+
+  const syncUserToFirestore = (nextUser) => {
+    if (!db || !nextUser?.id) return;
+    setDoc(doc(db, usersCollectionName, nextUser.id), sanitizeUser(nextUser), { merge: true }).catch(() => {});
   };
 
   useEffect(() => {
@@ -122,12 +151,30 @@ export function AuthProvider({ children }) {
 
     const unsub = onAuthStateChanged(auth, (fbUser) => {
       setFirebaseUser(fbUser || null);
-      if (fbUser) {
-        const email = String(fbUser.email || "").toLowerCase();
-        const role = adminEmails.has(email) ? "admin" : "user";
-        const nextUsers = [...users];
-        const idx = nextUsers.findIndex((item) => item.id === fbUser.uid);
-        const base = {
+      if (!fbUser) {
+        setUsers([]);
+        setReady(true);
+        return;
+      }
+
+      const email = String(fbUser.email || "").toLowerCase();
+      const role = adminEmails.has(email) ? "admin" : "user";
+
+      (async () => {
+        let firestoreUser = null;
+        if (db) {
+          try {
+            const snap = await getDoc(doc(db, usersCollectionName, fbUser.uid));
+            if (snap.exists()) {
+              firestoreUser = sanitizeUser({ ...snap.data(), id: fbUser.uid });
+            }
+          } catch {
+            firestoreUser = null;
+          }
+        }
+
+        const legacyUser = getLegacyUser(fbUser.uid, email);
+        const base = sanitizeUser({
           id: fbUser.uid,
           email,
           username: fbUser.displayName || email.split("@")[0] || "User",
@@ -137,25 +184,22 @@ export function AuthProvider({ children }) {
           watchHistory: [],
           watchlist: [],
           watchedEpisodes: {},
-        };
+        });
 
-        if (idx >= 0) {
-          const existingPhoto = String(nextUsers[idx]?.photoUrl || "").trim();
-          nextUsers[idx] = sanitizeUser({
-            ...base,
-            ...nextUsers[idx],
-            email,
-            username: fbUser.displayName || nextUsers[idx].username || base.username,
-            photoUrl: existingPhoto || base.photoUrl,
-            role: nextUsers[idx].role || role,
-          });
-        } else {
-          nextUsers.push(sanitizeUser(base));
-        }
+        const merged = sanitizeUser({
+          ...base,
+          ...(legacyUser || {}),
+          ...(firestoreUser || {}),
+          id: fbUser.uid,
+          email,
+          username: fbUser.displayName || firestoreUser?.username || legacyUser?.username || base.username,
+          role: firestoreUser?.role === "admin" || legacyUser?.role === "admin" || role === "admin" ? "admin" : "user",
+        });
 
-        persistUsers(nextUsers);
-      }
-      setReady(true);
+        setOrReplaceUser(merged);
+        syncUserToFirestore(merged);
+        setReady(true);
+      })();
     });
 
     return () => unsub();
@@ -166,9 +210,42 @@ export function AuthProvider({ children }) {
     return users.find((item) => item.id === firebaseUser.uid) || null;
   }, [users, firebaseUser]);
 
+  useEffect(() => {
+    if (!db || !firebaseUser?.uid) return;
+
+    const email = String(firebaseUser.email || "").toLowerCase();
+    const isAdminByEmail = adminEmails.has(email);
+    const shouldReadAllUsers = isAdminByEmail || user?.role === "admin";
+
+    if (shouldReadAllUsers) {
+      return onSnapshot(
+        collection(db, usersCollectionName),
+        (snapshot) => {
+          const nextUsers = snapshot.docs
+            .map((entry) => sanitizeUser({ ...entry.data(), id: entry.id }))
+            .filter((entry) => entry.id);
+          setUsers(nextUsers);
+        },
+        () => {}
+      );
+    }
+
+    return onSnapshot(
+      doc(db, usersCollectionName, firebaseUser.uid),
+      (snapshot) => {
+        if (!snapshot.exists()) return;
+        setUsers([sanitizeUser({ ...snapshot.data(), id: firebaseUser.uid })]);
+      },
+      () => {}
+    );
+  }, [firebaseUser?.uid, firebaseUser?.email, user?.role, adminEmails]);
+
   const guardConfig = () => {
     if (!hasConfig || !auth) {
       return { ok: false, error: "Layanan autentikasi belum tersedia. Coba lagi beberapa saat." };
+    }
+    if (!db) {
+      return { ok: false, error: "Firestore belum aktif di aplikasi." };
     }
     return null;
   };
@@ -206,13 +283,31 @@ export function AuthProvider({ children }) {
   const signInWithGoogle = async () => {
     const configErr = guardConfig();
     if (configErr) return configErr;
+    if (!canUseGoogleAuth) {
+      return { ok: false, error: "Google login tidak didukung di APK/WebView. Buka di browser eksternal." };
+    }
 
     try {
       const cred = await signInWithPopup(auth, googleProvider);
       setFirebaseUser(cred.user);
       return { ok: true };
     } catch (error) {
-      return { ok: false, error: error?.message || "Login Google gagal." };
+      const code = String(error?.code || "");
+      const canFallbackToRedirect =
+        code === "auth/operation-not-supported-in-this-environment" ||
+        code === "auth/popup-blocked" ||
+        code === "auth/popup-closed-by-user";
+
+      if (canFallbackToRedirect) {
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return { ok: true };
+        } catch (redirectError) {
+          return { ok: false, error: mapAuthErrorMessage(redirectError, "Login Google gagal.") };
+        }
+      }
+
+      return { ok: false, error: mapAuthErrorMessage(error, "Login Google gagal.") };
     }
   };
 
@@ -224,8 +319,9 @@ export function AuthProvider({ children }) {
 
   const updateCurrentUser = (mapper) => {
     if (!user) return { ok: false, error: "User tidak ditemukan." };
-    const nextUsers = users.map((item) => (item.id === user.id ? sanitizeUser(mapper(item)) : item));
-    persistUsers(nextUsers);
+    const nextUser = sanitizeUser(mapper(user));
+    setOrReplaceUser(nextUser);
+    syncUserToFirestore(nextUser);
     return { ok: true };
   };
 
@@ -259,18 +355,13 @@ export function AuthProvider({ children }) {
     const target = users.find((u) => u.id === userId);
     if (!target) return { ok: false, error: "User tidak ditemukan." };
 
-    return updateCurrentUser((currentAdmin) => {
-      const nextUsers = users.map((item) => {
-        if (item.id !== userId) return item;
-        return sanitizeUser({
-          ...item,
-          username: patch?.username ?? item.username,
-        });
-      });
-      saveUsers(nextUsers);
-      setUsers(nextUsers);
-      return currentAdmin;
+    const nextTarget = sanitizeUser({
+      ...target,
+      username: patch?.username ?? target.username,
     });
+    setOrReplaceUser(nextTarget);
+    syncUserToFirestore(nextTarget);
+    return { ok: true };
   };
 
   const adminSetPremium = (userId, { plan, days }) => {
@@ -285,8 +376,12 @@ export function AuthProvider({ children }) {
         ? { active: true, plan: String(plan || "Premium"), days: safeDays, expireAt }
         : { active: false, plan: "", days: 0, expireAt: "" };
 
-    const nextUsers = users.map((item) => (item.id === userId ? sanitizeUser({ ...item, premium: nextPremium }) : item));
-    persistUsers(nextUsers);
+    const nextTarget = sanitizeUser({
+      ...target,
+      premium: nextPremium,
+    });
+    setOrReplaceUser(nextTarget);
+    syncUserToFirestore(nextTarget);
     return { ok: true };
   };
 
@@ -393,6 +488,8 @@ export function AuthProvider({ children }) {
       ready,
       isLoggedIn: Boolean(firebaseUser?.uid),
       isAdmin: user?.role === "admin",
+      isWebView,
+      canUseGoogleAuth,
       signUp,
       signIn,
       signInWithGoogle,
@@ -412,7 +509,7 @@ export function AuthProvider({ children }) {
       adLink,
       adminSetAdLink,
     }),
-    [user, users, ready, adSlot, adLink, firebaseUser]
+    [user, users, ready, adSlot, adLink, firebaseUser, isWebView, canUseGoogleAuth]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

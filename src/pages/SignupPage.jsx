@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 export default function SignupPage() {
-  const { signUp, signInWithGoogle } = useAuth();
+  const { signUp, signInWithGoogle, canUseGoogleAuth, isWebView } = useAuth();
   const [form, setForm] = useState({ username: "", email: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -76,14 +76,19 @@ export default function SignupPage() {
           >
             {loading ? "Loading..." : "Daftar"}
           </button>
-          <button
-            type="button"
-            onClick={onGoogle}
-            disabled={loading}
-            className="w-full rounded-xl border border-zinc-700 bg-zinc-900/80 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:opacity-60"
-          >
-            Lanjut dengan Google
-          </button>
+          {canUseGoogleAuth ? (
+            <button
+              type="button"
+              onClick={onGoogle}
+              disabled={loading}
+              className="w-full rounded-xl border border-zinc-700 bg-zinc-900/80 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-800 disabled:opacity-60"
+            >
+              Lanjut dengan Google
+            </button>
+          ) : null}
+          {isWebView ? (
+            <p className="text-xs text-amber-300">Google login tidak tersedia di APK/WebView. Gunakan email/password atau browser eksternal.</p>
+          ) : null}
         </form>
         <p className="mt-4 text-sm text-zinc-300">
           Sudah punya akun?{" "}
