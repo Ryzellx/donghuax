@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import Hls from "hls.js";
 import { useAuth } from "../context/AuthContext";
@@ -45,13 +45,21 @@ function toPlayableEmbedUrl(url) {
       host.includes("rumble.com") ||
       host.includes("vidhide") ||
       host.includes("rubyvid") ||
+      host.includes("listeamed.net") ||
+      host.includes("vidguard") ||
+      host.includes("streamwish") ||
+      host.includes("filemoon") ||
+      host.includes("dood") ||
+      host.includes("mixdrop") ||
+      host.includes("streamtape") ||
+      host.includes("mp4upload") ||
       host.includes("turbovidhls.com") ||
+      /^\/e\/[^/]+/i.test(parsed.pathname) ||
       parsed.pathname.includes("/embed") ||
       parsed.pathname.includes("videoembed")
     ) {
       return parsed.toString();
     }
-
     return "";
   } catch {
     return "";
@@ -147,11 +155,14 @@ function extractServerOptions(payload) {
 function rankServerName(name) {
   const key = toSafeText(name).trim().toLowerCase();
   if (!key) return 999;
+  if (key.includes("ok.ru") || key === "ok.ru" || key.includes("okru")) return 1;
+  if (key.includes("dailymotion")) return 2;
+  if (key.includes("rumble")) return 3;
   if (key === "hd-2") return 1;
   if (key === "hd-1") return 2;
   if (key === "hd-3") return 3;
-  if (key.includes("vid")) return 4;
-  if (key.includes("mega")) return 5;
+  if (key.includes("vid")) return 6;
+  if (key.includes("mega")) return 7;
   return 50;
 }
 
@@ -203,6 +214,17 @@ function pickEpisodeId(episodes, episodeIdFromQuery, episodeFromQuery) {
   if (byHighestNumber?.episodeId) return toSafeText(byHighestNumber.episodeId);
 
   return toSafeText(episodes?.[episodes.length - 1]?.episodeId || episodes?.[0]?.episodeId);
+}
+
+function formatEpisodeLabel(episode, index = 0) {
+  const number = Number(episode?.number);
+  const rawTitle = toSafeText(episode?.title).trim();
+  const fallbackNo = index + 1;
+  const episodeNo = Number.isFinite(number) && number > 0 ? number : fallbackNo;
+
+  if (!rawTitle) return `Episode ${episodeNo}`;
+  if (/^episode\s*\d+/i.test(rawTitle)) return rawTitle;
+  return `Episode ${episodeNo} - ${rawTitle}`;
 }
 
 function getYouTubeEmbed(detail, videos) {
@@ -269,6 +291,7 @@ export default function WatchPage() {
   const [canShowAdImage, setCanShowAdImage] = useState(true);
   const [watchedMeta, setWatchedMeta] = useState(null);
   const lastMarkedRef = useRef("");
+  const failedSourceUrlsRef = useRef(new Set());
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
 
@@ -505,6 +528,42 @@ export default function WatchPage() {
     (animeId ? `https://anichin.club/${encodeURIComponent(animeId)}` : "");
   const adImageCandidate = normalizeUrl(adLink);
 
+  const tryFallbackSource = useCallback(
+    (badUrl) => {
+      const normalizedBad = normalizeUrl(badUrl);
+      if (normalizedBad) failedSourceUrlsRef.current.add(normalizedBad);
+
+      const currentIndex = streamLinks.findIndex((item) => normalizeUrl(item?.url) === normalizeUrl(activeSourceUrl));
+      const startIndex = currentIndex >= 0 ? currentIndex + 1 : 0;
+      const next = streamLinks
+        .slice(startIndex)
+        .find((item) => item?.url && !failedSourceUrlsRef.current.has(normalizeUrl(item.url)));
+
+      if (!next) {
+        setError("Source stream error. Semua source yang tersedia sudah dicoba.");
+        return;
+      }
+
+      setError(`Source error, pindah otomatis ke ${next.name || "source berikutnya"}.`);
+      if (isPremium) {
+        setSelectedSourceId(next.id);
+      } else {
+        setStreamLinks((prev) => {
+          const idx = prev.findIndex((item) => item?.id === next.id);
+          if (idx <= 0) return prev;
+          const clone = [...prev];
+          const [picked] = clone.splice(idx, 1);
+          return [picked, ...clone];
+        });
+      }
+    },
+    [activeSourceUrl, isPremium, streamLinks]
+  );
+
+  useEffect(() => {
+    failedSourceUrlsRef.current.clear();
+  }, [selectedEpisodeId, selectedServerId, selectedCategory, streamLinks.length]);
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return undefined;
@@ -538,6 +597,11 @@ export default function WatchPage() {
         enableWorker: true,
         lowLatencyMode: true,
       });
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data?.fatal) {
+          tryFallbackSource(streamPlaybackUrl);
+        }
+      });
       hlsRef.current = hls;
       hls.loadSource(streamPlaybackUrl);
       hls.attachMedia(video);
@@ -549,7 +613,7 @@ export default function WatchPage() {
         hlsRef.current = null;
       }
     };
-  }, [streamPlaybackUrl, streamEmbedUrl, canUseVideoTag]);
+  }, [streamPlaybackUrl, streamEmbedUrl, canUseVideoTag, tryFallbackSource]);
 
   const unlockAndOpenSponsor = () => {
     setSponsorUnlocked(true);
@@ -658,9 +722,9 @@ export default function WatchPage() {
               }}
               className="w-full rounded-xl border border-white/15 bg-slate-950/80 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/60"
             >
-              {episodes.map((item) => (
+              {episodes.map((item, idx) => (
                 <option key={item.episodeId || item.id || item.title} value={item.episodeId || ""}>
-                  {item.title || (item.number ? `Episode ${item.number}` : "Episode")}
+                  {formatEpisodeLabel(item, idx)}
                 </option>
               ))}
             </select>
@@ -731,7 +795,14 @@ export default function WatchPage() {
         ) : null}
 
         {streamPlaybackUrl && !streamEmbedUrl && canUseVideoTag ? (
-          <video ref={videoRef} className="aspect-video w-full bg-black" controls playsInline preload="metadata" />
+          <video
+            ref={videoRef}
+            className="aspect-video w-full bg-black"
+            controls
+            playsInline
+            preload="metadata"
+            onError={() => tryFallbackSource(streamPlaybackUrl)}
+          />
         ) : embedUrl ? (
           <iframe
             className="aspect-video w-full"
@@ -739,6 +810,7 @@ export default function WatchPage() {
             title={detail.title || "Streaming"}
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
+            onError={() => tryFallbackSource(streamPlaybackUrl || embedUrl)}
           />
         ) : (
           <div className="flex aspect-video flex-col items-center justify-center gap-3 text-sm text-slate-400">

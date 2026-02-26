@@ -23,14 +23,24 @@ export default function Navbar() {
           type="button"
           className="rounded-lg border border-white/15 p-2 text-slate-300 md:hidden"
           onClick={() => setMenuOpen((prev) => !prev)}
+          aria-expanded={menuOpen}
+          aria-controls="mobile-nav"
         >
           <span className="sr-only">Toggle menu</span>
-          {menuOpen ? "x" : "menu"}
+          {menuOpen ? (
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M6 6L18 18M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          ) : (
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 7H20M4 12H20M4 17H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          )}
         </button>
 
         <nav className="hidden items-center gap-2 md:flex">
           <NavLink to="/" className={navClass}>
-            Donghua
+            Home
           </NavLink>
           <NavLink to="/history" className={navClass}>
             Riwayat
@@ -96,10 +106,10 @@ export default function Navbar() {
       </div>
 
       {menuOpen ? (
-        <div className="border-t border-white/10 bg-slate-950/95 px-4 py-3 md:hidden">
+        <div id="mobile-nav" className="border-t border-white/10 bg-slate-950/95 px-4 py-3 md:hidden">
           <div className="flex flex-col gap-2">
             <NavLink to="/" className={navClass} onClick={() => setMenuOpen(false)}>
-              Donghua
+              Home
             </NavLink>
             <NavLink to="/history" className={navClass} onClick={() => setMenuOpen(false)}>
               Riwayat

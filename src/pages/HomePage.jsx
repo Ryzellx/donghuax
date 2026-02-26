@@ -4,6 +4,61 @@ import HorizontalRail from "../components/HorizontalRail";
 import { api, extractGenreList, extractHomeLists, extractList } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 
+const SEARCH_HISTORY_KEY = "donghuax_search_history_v1";
+const SEARCH_HISTORY_LIMIT = 12;
+
+function normalizeSearchText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function levenshteinDistance(a, b) {
+  const left = normalizeSearchText(a);
+  const right = normalizeSearchText(b);
+  const rows = left.length + 1;
+  const cols = right.length + 1;
+  const dp = Array.from({ length: rows }, () => Array(cols).fill(0));
+
+  for (let i = 0; i < rows; i += 1) dp[i][0] = i;
+  for (let j = 0; j < cols; j += 1) dp[0][j] = j;
+
+  for (let i = 1; i < rows; i += 1) {
+    for (let j = 1; j < cols; j += 1) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+    }
+  }
+
+  return dp[rows - 1][cols - 1];
+}
+
+function pickBestCorrection(query, items = []) {
+  const base = normalizeSearchText(query);
+  if (!base || !Array.isArray(items) || items.length === 0) return "";
+
+  let best = "";
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  items.forEach((item) => {
+    const candidate = String(item || "").trim();
+    if (!candidate) return;
+    const normalizedCandidate = normalizeSearchText(candidate);
+    if (!normalizedCandidate || normalizedCandidate === base) return;
+    const dist = levenshteinDistance(base, normalizedCandidate);
+    const maxLen = Math.max(base.length, normalizedCandidate.length, 1);
+    const ratio = dist / maxLen;
+    if (ratio < bestScore) {
+      bestScore = ratio;
+      best = candidate;
+    }
+  });
+
+  return bestScore <= 0.45 ? best : "";
+}
+
 export default function HomePage() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -19,11 +74,23 @@ export default function HomePage() {
   });
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
+  const [searchHistory, setSearchHistory] = useState([]);
+  const [searchCorrection, setSearchCorrection] = useState("");
   const [genres, setGenres] = useState([]);
   const [selectedGenre, setSelectedGenre] = useState("");
   const [genreItems, setGenreItems] = useState([]);
   const [genreLoading, setGenreLoading] = useState(false);
   const [featuredIndex, setFeaturedIndex] = useState(0);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SEARCH_HISTORY_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      setSearchHistory(Array.isArray(parsed) ? parsed.filter(Boolean).slice(0, SEARCH_HISTORY_LIMIT) : []);
+    } catch {
+      setSearchHistory([]);
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -109,21 +176,78 @@ export default function HomePage() {
     [featuredPool, featuredIndex, home.topAiring, home.mostPopular, home.latestEpisodes]
   );
 
-  const onSearch = async (e) => {
-    e.preventDefault();
-    if (!query.trim()) {
+  const filteredHistory = useMemo(() => {
+    const q = normalizeSearchText(query);
+    if (!q) return searchHistory.slice(0, 6);
+    return searchHistory.filter((item) => normalizeSearchText(item).includes(q)).slice(0, 6);
+  }, [searchHistory, query]);
+
+  const writeSearchHistory = (value) => {
+    const cleaned = String(value || "").trim();
+    if (!cleaned) return;
+    setSearchHistory((prev) => {
+      const next = [cleaned, ...prev.filter((item) => normalizeSearchText(item) !== normalizeSearchText(cleaned))].slice(
+        0,
+        SEARCH_HISTORY_LIMIT
+      );
+      try {
+        localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(next));
+      } catch {
+        // ignore storage failures
+      }
+      return next;
+    });
+  };
+
+  const runSearch = async (rawQuery) => {
+    const cleaned = String(rawQuery || "").trim();
+    if (!cleaned) {
       setSearchResults([]);
+      setSearchCorrection("");
       return;
     }
 
     try {
       setError("");
-      const payload = await api.searchAnime(query.trim());
-      setSearchResults(extractList(payload));
+      setSearchCorrection("");
+      const payload = await api.searchAnime(cleaned);
+      const list = extractList(payload);
+      setSearchResults(list);
+      writeSearchHistory(cleaned);
+
+      if (list.length > 0) {
+        const localCorrection = pickBestCorrection(
+          cleaned,
+          list.map((item) => item?.title || item?.headline || "")
+        );
+        if (localCorrection) setSearchCorrection(localCorrection);
+        return;
+      }
+
+      const fallbackToken = cleaned.split(/\s+/).find((token) => token.length >= 3) || "";
+      if (fallbackToken && normalizeSearchText(fallbackToken) !== normalizeSearchText(cleaned)) {
+        try {
+          const fallbackPayload = await api.searchAnime(fallbackToken);
+          const fallbackList = extractList(fallbackPayload);
+          const fallbackCorrection = pickBestCorrection(
+            cleaned,
+            fallbackList.map((item) => item?.title || item?.headline || "")
+          );
+          if (fallbackCorrection) setSearchCorrection(fallbackCorrection);
+        } catch {
+          // ignore correction fetch failures
+        }
+      }
     } catch (err) {
       setError(err.message || "Search donghua gagal.");
       setSearchResults([]);
+      setSearchCorrection("");
     }
+  };
+
+  const onSearch = async (e) => {
+    e.preventDefault();
+    await runSearch(query);
   };
 
   if (loading) {
@@ -176,6 +300,39 @@ export default function HomePage() {
             Search
           </button>
         </form>
+        {filteredHistory.length > 0 ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-xs uppercase tracking-wider text-slate-400">Riwayat</span>
+            {filteredHistory.map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => {
+                  setQuery(item);
+                  runSearch(item);
+                }}
+                className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-slate-200 transition hover:border-cyan-300/50 hover:text-white"
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {searchCorrection ? (
+          <p className="mt-3 text-xs text-amber-300">
+            Mungkin maksud kamu:{" "}
+            <button
+              type="button"
+              className="font-semibold underline underline-offset-2"
+              onClick={() => {
+                setQuery(searchCorrection);
+                runSearch(searchCorrection);
+              }}
+            >
+              {searchCorrection}
+            </button>
+          </p>
+        ) : null}
       </section>
 
       {error ? <p className="text-sm text-red-400">{error}</p> : null}

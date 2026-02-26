@@ -25,12 +25,18 @@ function toQuery(params = {}) {
 }
 
 function normalizeExternalUrl(url) {
-  const value = toSafeText(url).trim();
+  const value = toSafeText(url).trim().replace(/\\\//g, "/");
   if (!value) return "";
   if (/^https?:\/\//i.test(value)) return value;
   if (value.startsWith("//")) return `https:${value}`;
   if (/^[a-z0-9.-]+\.[a-z]{2,}(\/.*)?$/i.test(value)) return `https://${value}`;
   return "";
+}
+
+function normalizeSourceKey(value) {
+  return cleanSourceName(value, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }
 
 function deriveSeriesSlug(slug) {
@@ -322,10 +328,18 @@ export function extractEpisodeList(payload) {
     .map((episode) => {
       const episodeId = toSafeText(episode?.slug || episode?.episodeId || episode?.id);
       const number = parseEpisodeNumber(episode?.episode || episode?.subtitle || episode?.name || episodeId);
-      const title =
-        toSafeText(episode?.subtitle) ||
-        toSafeText(episode?.name) ||
-        (number ? `Episode ${number}` : "Episode");
+      const rawTitle = toSafeText(episode?.subtitle) || toSafeText(episode?.name);
+      const fallbackNo = parseEpisodeNumber(episodeId) || 0;
+      const episodeNo = number || fallbackNo;
+      const title = rawTitle
+        ? /^episode\s*\d+/i.test(rawTitle)
+          ? rawTitle
+          : episodeNo
+          ? `Episode ${episodeNo} - ${rawTitle}`
+          : rawTitle
+        : episodeNo
+        ? `Episode ${episodeNo}`
+        : "Episode";
 
       return {
         ...episode,
@@ -368,23 +382,31 @@ function mapPlayersToServers(players) {
 }
 
 function mapEpisodeSources(players, selectedServerName, videoPayload) {
-  const playerSources = Array.isArray(players)
-    ? players
-        .filter((player) => {
-          if (!selectedServerName) return true;
-          return (
-            cleanSourceName(player?.name).toLowerCase() ===
-            cleanSourceName(selectedServerName).toLowerCase()
-          );
-        })
-        .map((player, idx) => {
-          const url = normalizeExternalUrl(player?.url);
-          if (!url) return null;
-          const quality = cleanSourceName(player?.name, `Player ${idx + 1}`);
-          return { quality, url };
-        })
-        .filter(Boolean)
-    : [];
+  const sourcePlayers = Array.isArray(players) ? players : [];
+  const wantedKey = normalizeSourceKey(selectedServerName);
+  let filteredPlayers = sourcePlayers;
+
+  if (wantedKey) {
+    const exact = sourcePlayers.filter((player) => normalizeSourceKey(player?.name) === wantedKey);
+    if (exact.length > 0) {
+      filteredPlayers = exact;
+    } else {
+      const fuzzy = sourcePlayers.filter((player) => {
+        const key = normalizeSourceKey(player?.name);
+        return key && (key.includes(wantedKey) || wantedKey.includes(key));
+      });
+      filteredPlayers = fuzzy.length > 0 ? fuzzy : sourcePlayers;
+    }
+  }
+
+  const playerSources = filteredPlayers
+    .map((player, idx) => {
+      const url = normalizeExternalUrl(player?.url || player?.src || player?.link || player?.file);
+      if (!url) return null;
+      const quality = cleanSourceName(player?.name, `Player ${idx + 1}`);
+      return { quality, url };
+    })
+    .filter(Boolean);
 
   const mediaSources = Array.isArray(videoPayload?.medias)
     ? videoPayload.medias
