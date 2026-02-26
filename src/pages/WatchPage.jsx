@@ -277,7 +277,7 @@ export default function WatchPage() {
   const params = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, markEpisodeWatched, adLink } = useAuth();
+  const { user, markEpisodeWatched, getRandomActiveAdEntry } = useAuth();
 
   const animeId = params.animeId || "";
   const sourceParam = params.source || ANIME_PROVIDER;
@@ -303,6 +303,7 @@ export default function WatchPage() {
   const [loadingSources, setLoadingSources] = useState(false);
   const [sponsorUnlocked, setSponsorUnlocked] = useState(false);
   const [canShowAdImage, setCanShowAdImage] = useState(true);
+  const [displayAd, setDisplayAd] = useState(null);
   const [watchedMeta, setWatchedMeta] = useState(null);
   const lastMarkedRef = useRef("");
   const failedSourceUrlsRef = useRef(new Set());
@@ -321,7 +322,8 @@ export default function WatchPage() {
   useEffect(() => {
     setSponsorUnlocked(false);
     setCanShowAdImage(true);
-  }, [animeId, source, episodeFromQuery, episodeIdFromQuery, slug]);
+    setDisplayAd(getRandomActiveAdEntry());
+  }, [animeId, source, episodeFromQuery, episodeIdFromQuery, slug, getRandomActiveAdEntry]);
 
   useEffect(() => {
     if (!showAdOverlay) return undefined;
@@ -541,7 +543,7 @@ export default function WatchPage() {
     detail?.url ||
     detail?.trailer?.url ||
     (animeId ? `https://anichin.club/${encodeURIComponent(animeId)}` : "");
-  const adImageCandidate = normalizeUrl(adLink);
+  const adImageCandidate = normalizeUrl(displayAd?.imageUrl || "");
 
   const tryFallbackSource = useCallback(
     (badUrl) => {
@@ -632,9 +634,11 @@ export default function WatchPage() {
 
   const unlockAndOpenSponsor = () => {
     setSponsorUnlocked(true);
-    if (!adLink) return;
+    const randomAd = getRandomActiveAdEntry();
+    const targetLink = randomAd?.url || displayAd?.url || "";
+    if (!targetLink) return;
     try {
-      window.open(adLink, "_blank", "noopener,noreferrer");
+      window.open(targetLink, "_blank", "noopener,noreferrer");
     } catch {
       // ignore popup failures, playback must continue
     }
@@ -683,7 +687,7 @@ export default function WatchPage() {
                 <p className="mt-2 text-sm text-zinc-300">
                   Sponsor harus dibuka dulu. Setelah disentuh, player akan otomatis tersedia.
                 </p>
-                {adLink ? <p className="mt-3 line-clamp-1 text-xs text-zinc-400">{adLink}</p> : null}
+                {displayAd?.url ? <p className="mt-3 line-clamp-1 text-xs text-zinc-400">{displayAd.url}</p> : null}
               </div>
             )}
             <div className="border-t border-white/10 bg-black/70 px-4 py-3 text-center text-xs text-zinc-300">

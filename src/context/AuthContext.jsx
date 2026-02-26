@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
@@ -18,6 +18,8 @@ const usersCollectionName = "users";
 const legacyUsersStorageKey = "animex_users";
 const adSlotStorageKey = "animex_ad_slot";
 const adLinkStorageKey = "animex_ad_link";
+const adLinksStorageKey = "animex_ad_links";
+const totalAdLinkSlots = 10;
 const allowedAdSlots = new Set(["top-center", "bottom-right", "bottom-left", "middle-right", "middle-left"]);
 
 function normalizeAdLink(link) {
@@ -25,6 +27,56 @@ function normalizeAdLink(link) {
   if (!raw) return "";
   if (/^https?:\/\//i.test(raw)) return raw;
   return `https://${raw}`;
+}
+
+function createDefaultAdEntry(index) {
+  return {
+    id: `slot-${index + 1}`,
+    slot: index + 1,
+    url: "",
+    imageUrl: "",
+    durationDays: 7,
+    startAt: "",
+    endAt: "",
+  };
+}
+
+function sanitizeAdEntry(entry, index = 0) {
+  const fallback = createDefaultAdEntry(index);
+  const slotNumber = Number(entry?.slot || fallback.slot);
+  const slot = Number.isInteger(slotNumber) && slotNumber > 0 ? slotNumber : fallback.slot;
+  const normalizedUrl = normalizeAdLink(entry?.url || "");
+  const normalizedImageUrl = normalizeAdLink(entry?.imageUrl || "");
+  const durationRaw = Number(entry?.durationDays);
+  const durationDays = Number.isFinite(durationRaw) ? Math.max(1, Math.min(3650, Math.floor(durationRaw))) : 7;
+  const startAtValue = String(entry?.startAt || "");
+  const endAtValue = String(entry?.endAt || "");
+  const startAtTime = new Date(startAtValue).getTime();
+  const endAtTime = new Date(endAtValue).getTime();
+
+  return {
+    id: String(entry?.id || fallback.id),
+    slot,
+    url: normalizedUrl,
+    imageUrl: normalizedImageUrl,
+    durationDays,
+    startAt: Number.isFinite(startAtTime) ? new Date(startAtTime).toISOString() : "",
+    endAt: Number.isFinite(endAtTime) ? new Date(endAtTime).toISOString() : "",
+  };
+}
+
+function ensureAdLinksShape(list) {
+  const source = Array.isArray(list) ? list : [];
+  return Array.from({ length: totalAdLinkSlots }, (_, index) => {
+    const bySlot = source.find((item) => Number(item?.slot) === index + 1);
+    return sanitizeAdEntry(bySlot || createDefaultAdEntry(index), index);
+  });
+}
+
+function isAdEntryActive(entry) {
+  if (!entry?.url || !entry?.endAt) return false;
+  const end = new Date(entry.endAt).getTime();
+  return Number.isFinite(end) && end > Date.now();
 }
 
 function getAdminEmails() {
@@ -100,6 +152,39 @@ function saveAdLink(link) {
   localStorage.setItem(adLinkStorageKey, normalizeAdLink(link));
 }
 
+function readAdLinks() {
+  try {
+    const raw = localStorage.getItem(adLinksStorageKey);
+    const parsed = raw ? JSON.parse(raw) : [];
+    const fromNewStorage = ensureAdLinksShape(parsed);
+    const hasConfigured = fromNewStorage.some((entry) => entry.url);
+    if (hasConfigured) return fromNewStorage;
+
+    const legacyLink = readAdLink();
+    if (legacyLink) {
+      const migrated = ensureAdLinksShape([
+        {
+          id: "slot-1",
+          slot: 1,
+          url: legacyLink,
+          durationDays: 30,
+          startAt: new Date().toISOString(),
+          endAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+        },
+      ]);
+      return migrated;
+    }
+
+    return fromNewStorage;
+  } catch {
+    return ensureAdLinksShape([]);
+  }
+}
+
+function saveAdLinks(list) {
+  localStorage.setItem(adLinksStorageKey, JSON.stringify(ensureAdLinksShape(list)));
+}
+
 function mapAuthErrorMessage(error, fallback) {
   const code = String(error?.code || "");
   if (code === "auth/invalid-credential") {
@@ -125,10 +210,15 @@ export function AuthProvider({ children }) {
   const [firebaseUser, setFirebaseUser] = useState(null);
   const [ready, setReady] = useState(false);
   const [adSlot, setAdSlot] = useState(() => readAdSlot());
-  const [adLink, setAdLink] = useState(() => readAdLink());
+  const [adLinks, setAdLinks] = useState(() => readAdLinks());
   const adminEmails = useMemo(() => getAdminEmails(), []);
   const isWebView = useMemo(() => detectWebView(), []);
   const canUseGoogleAuth = !isWebView;
+  const activeAdLinks = useMemo(() => adLinks.filter((item) => isAdEntryActive(item)), [adLinks]);
+  const adLink = useMemo(
+    () => activeAdLinks[0]?.url || adLinks.find((item) => item.url)?.url || "",
+    [activeAdLinks, adLinks]
+  );
 
   const setOrReplaceUser = (nextUser) => {
     setUsers((prev) => {
@@ -476,10 +566,94 @@ export function AuthProvider({ children }) {
     if (normalized && !/^https?:\/\/[^\s]+$/i.test(normalized)) {
       return { ok: false, error: "Format link iklan tidak valid." };
     }
-    setAdLink(normalized);
-    saveAdLink(normalized);
+    setAdLinks((prev) => {
+      const next = ensureAdLinksShape(prev);
+      if (!normalized) {
+        next[0] = sanitizeAdEntry({ ...next[0], url: "", startAt: "", endAt: "" }, 0);
+      } else {
+        const now = Date.now();
+        next[0] = sanitizeAdEntry(
+          {
+            ...next[0],
+            url: normalized,
+            durationDays: next[0]?.durationDays || 30,
+            startAt: new Date(now).toISOString(),
+            endAt: new Date(now + Number(next[0]?.durationDays || 30) * 86400000).toISOString(),
+          },
+          0
+        );
+      }
+      saveAdLinks(next);
+      saveAdLink(normalized);
+      return next;
+    });
     return { ok: true };
   };
+
+  const adminSetAdLinkSlot = ({ slot, link, imageUrl, durationDays }) => {
+    if (!user || user.role !== "admin") return { ok: false, error: "Akses admin dibutuhkan." };
+
+    const slotNumber = Number(slot);
+    if (!Number.isInteger(slotNumber) || slotNumber < 1 || slotNumber > totalAdLinkSlots) {
+      return { ok: false, error: "Slot iklan harus 1-10." };
+    }
+
+    const normalized = normalizeAdLink(link);
+    if (normalized && !/^https?:\/\/[^\s]+$/i.test(normalized)) {
+      return { ok: false, error: "Format link iklan tidak valid." };
+    }
+    const normalizedImage = normalizeAdLink(imageUrl);
+    if (normalizedImage && !/^https?:\/\/[^\s]+$/i.test(normalizedImage)) {
+      return { ok: false, error: "Format URL gambar iklan tidak valid." };
+    }
+
+    const safeDays = Math.max(1, Math.min(3650, Math.floor(Number(durationDays) || 0)));
+    if (normalized && !safeDays) {
+      return { ok: false, error: "Durasi iklan harus lebih dari 0 hari." };
+    }
+
+    setAdLinks((prev) => {
+      const next = ensureAdLinksShape(prev);
+      const index = slotNumber - 1;
+
+      if (!normalized) {
+        next[index] = sanitizeAdEntry(
+          { ...next[index], url: "", imageUrl: "", startAt: "", endAt: "", durationDays: safeDays },
+          index
+        );
+      } else {
+        const now = Date.now();
+        next[index] = sanitizeAdEntry(
+          {
+            ...next[index],
+            slot: slotNumber,
+            url: normalized,
+            imageUrl: normalizedImage,
+            durationDays: safeDays,
+            startAt: new Date(now).toISOString(),
+            endAt: new Date(now + safeDays * 86400000).toISOString(),
+          },
+          index
+        );
+      }
+
+      saveAdLinks(next);
+      if (slotNumber === 1) saveAdLink(next[index]?.url || "");
+      return next;
+    });
+    return { ok: true };
+  };
+
+  const getRandomActiveAdEntry = useCallback(() => {
+    const pool = adLinks.filter((item) => isAdEntryActive(item) && item.url);
+    if (!pool.length) return null;
+    if (pool.length === 1) return pool[0];
+    return pool[Math.floor(Math.random() * pool.length)] || null;
+  }, [adLinks]);
+
+  const getRandomActiveAdLink = useCallback(() => {
+    return getRandomActiveAdEntry()?.url || "";
+  }, [getRandomActiveAdEntry]);
 
   const value = useMemo(
     () => ({
@@ -506,10 +680,26 @@ export function AuthProvider({ children }) {
       markEpisodeWatched,
       adSlot,
       adminSetAdSlot,
+      adLinks,
       adLink,
       adminSetAdLink,
+      adminSetAdLinkSlot,
+      getRandomActiveAdEntry,
+      getRandomActiveAdLink,
     }),
-    [user, users, ready, adSlot, adLink, firebaseUser, isWebView, canUseGoogleAuth]
+    [
+      user,
+      users,
+      ready,
+      adSlot,
+      adLinks,
+      adLink,
+      firebaseUser,
+      isWebView,
+      canUseGoogleAuth,
+      getRandomActiveAdEntry,
+      getRandomActiveAdLink,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

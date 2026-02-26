@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
@@ -42,11 +43,72 @@ function AuthOnly({ children }) {
   return isLoggedIn ? <Navigate to="/" replace /> : children;
 }
 
+function resolveWhatsAppLink() {
+  const direct = String(import.meta.env.VITE_WHATSAPP_LINK || "").trim();
+  if (direct) {
+    const hasProtocol = /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(direct);
+    return hasProtocol ? direct : `https://${direct.replace(/^\/+/, "")}`;
+  }
+
+  const numberRaw = String(import.meta.env.VITE_WHATSAPP_NUMBER || "")
+    .trim()
+    .replace(/[^\d]/g, "");
+  if (numberRaw) return `https://wa.me/${numberRaw}`;
+
+  return "https://wa.me/6280000000000";
+}
+
+function GlobalAnnouncement() {
+  const [visible, setVisible] = useState(false);
+  const waLink = useMemo(() => resolveWhatsAppLink(), []);
+  const sessionShownKey = "animex_announcement_shown_session";
+
+  useEffect(() => {
+    const alreadyShown = sessionStorage.getItem(sessionShownKey) === "1";
+    if (!alreadyShown) {
+      setVisible(true);
+      sessionStorage.setItem(sessionShownKey, "1");
+    }
+  }, []);
+
+  if (!visible) return null;
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 p-4">
+      <div className="w-full max-w-lg rounded-2xl border border-white/15 bg-slate-950 p-5 sm:p-6">
+        <p className="text-xs uppercase tracking-[0.2em] text-cyan-200">Announcement</p>
+        <h2 className="mt-2 font-heading text-2xl font-bold text-white">Open Penempatan Iklan</h2>
+        <p className="mt-3 text-sm text-slate-300">
+          Penempatan iklan di website/aplikasi ini sedang dibuka. Jika ingin pasang iklan, hubungi WhatsApp admin.
+        </p>
+        <div className="mt-5 flex flex-wrap gap-2">
+          <a
+            href={waLink}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-xl bg-gradient-to-r from-fuchsia-500 to-cyan-400 px-4 py-2.5 text-sm font-semibold text-white"
+          >
+            Hubungi WhatsApp
+          </a>
+          <button
+            type="button"
+            onClick={() => setVisible(false)}
+            className="rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-sm text-slate-100 hover:bg-white/10"
+          >
+            Skip
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const location = useLocation();
 
   return (
     <div className="min-h-screen bg-bg font-body text-text">
+      <GlobalAnnouncement />
       <Navbar />
       <main className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-5 sm:py-6 lg:px-8">
         <div key={location.pathname} className="animate-page-in">

@@ -1,11 +1,27 @@
-import { useState } from "react";
-import { Link, NavLink, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 export default function Navbar() {
   const { user, isLoggedIn, isAdmin, signOut } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const profileMenuRef = useRef(null);
+
+  const closeMenus = () => {
+    setMenuOpen(false);
+    if (profileMenuRef.current) {
+      profileMenuRef.current.removeAttribute("open");
+    }
+  };
+
+  useEffect(() => {
+    setMenuOpen(false);
+    if (profileMenuRef.current) {
+      profileMenuRef.current.removeAttribute("open");
+    }
+  }, [location.pathname]);
 
   const navClass = ({ isActive }) =>
     `rounded-full px-3 py-1.5 text-sm transition ${
@@ -50,7 +66,7 @@ export default function Navbar() {
           </NavLink>
 
           {isLoggedIn ? (
-            <details className="relative ml-2">
+             <details ref={profileMenuRef} className="relative ml-2">
               <summary className="flex cursor-pointer list-none items-center gap-2 rounded-full border border-white/15 bg-white/5 px-2 py-1.5">
                 <div className="h-8 w-8 overflow-hidden rounded-full border border-white/20 bg-slate-800">
                   {user?.photoUrl ? (
@@ -71,19 +87,20 @@ export default function Navbar() {
                     <p className="mt-1 text-xs font-semibold text-slate-400">Free Plan</p>
                   )}
                 </div>
-                <Link to="/account" className="block rounded-xl px-3 py-2 text-sm text-slate-200 hover:bg-white/10">
+                <Link to="/account" onClick={closeMenus} className="block rounded-xl px-3 py-2 text-sm text-slate-200 hover:bg-white/10">
                   Account
                 </Link>
-                <Link to="/premium" className="block rounded-xl px-3 py-2 text-sm text-slate-200 hover:bg-white/10">
+                <Link to="/premium" onClick={closeMenus} className="block rounded-xl px-3 py-2 text-sm text-slate-200 hover:bg-white/10">
                   Premium
                 </Link>
                 {isAdmin ? (
-                  <Link to="/admin" className="block rounded-xl px-3 py-2 text-sm text-slate-200 hover:bg-white/10">
+                  <Link to="/admin" onClick={closeMenus} className="block rounded-xl px-3 py-2 text-sm text-slate-200 hover:bg-white/10">
                     Admin Panel
                   </Link>
                 ) : null}
                 <button
                   onClick={() => {
+                    closeMenus();
                     signOut();
                     navigate("/login");
                   }}

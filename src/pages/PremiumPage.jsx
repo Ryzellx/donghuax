@@ -14,7 +14,11 @@ export default function PremiumPage() {
   return (
     <section className="mx-auto max-w-3xl space-y-4">
       <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 sm:p-6">
-        <h1 className="font-heading text-2xl font-bold text-white sm:text-3xl">Premium</h1>
+        <h1 className="font-heading text-2xl font-bold sm:text-3xl">
+          <span className="bg-gradient-to-r from-amber-200 via-yellow-300 to-amber-500 bg-clip-text text-transparent">
+            Premium
+          </span>
+        </h1>
         <p className="mt-2 text-sm text-slate-300">
           Aktivasi via admin. Admin bisa atur plan + durasi hari langsung dari Admin Panel. Mulai dari 10rb aja!
         </p>
@@ -31,7 +35,7 @@ export default function PremiumPage() {
           <li>Prioritas support dari admin.</li>
         </ul>
         <a
-          href="https://wa.me/628990870271"
+          href="https://wa.me/628990870271?text=Halo%20Admin%20DonghuaX%2C%20saya%20ingin%20aktivasi%20premium."
           target="_blank"
           rel="noreferrer"
           className="mt-4 inline-flex rounded-xl bg-gradient-to-r from-fuchsia-500 to-cyan-400 px-4 py-2.5 text-sm font-semibold text-white"
@@ -42,5 +46,3 @@ export default function PremiumPage() {
     </section>
   );
 }
-
-
